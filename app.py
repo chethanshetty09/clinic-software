@@ -154,13 +154,68 @@ def render_sidebar():
 
 def dashboard_page():
     user = st.session_state.user
+    role = user["role"]
     st.markdown(f"<div class='page-title'>Welcome, {user['full_name']}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='page-subtitle'>{datetime.date.today().strftime('%A, %B %d, %Y')}</div>", unsafe_allow_html=True)
     stats = db.get_dashboard_stats()
-    c1, c2, c3, c4 = st.columns(4)
-    for col, icon, label, key in [(c1,"👥","Total Patients","total_patients"),(c2,"🩺","Today's Consultations","today_consultations"),(c3,"⏳","Pending","pending"),(c4,"💰","Today's Revenue","today_revenue")]:
-        val = stats[key]; display = f"₹{val:,.0f}" if "revenue" in key else str(val)
-        col.markdown(f"<div class='stat-card'><p class='stat-label'>{icon} {label}</p><p class='stat-value'>{display}</p></div>", unsafe_allow_html=True)
+
+    # Top stat cards - different for each role
+    if role == "receptionist":
+        # Receptionist: NO revenue info
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='stat-card'><p class='stat-label'>👥 Total Patients</p><p class='stat-value'>{stats['total_patients']}</p></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='stat-card'><p class='stat-label'>🩺 Today's Consultations</p><p class='stat-value'>{stats['today_consultations']}</p></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='stat-card'><p class='stat-label'>⏳ Pending</p><p class='stat-value'>{stats['pending']}</p></div>", unsafe_allow_html=True)
+
+    elif role == "super_admin":
+        # Super Admin: Full income breakdown
+        invoices_data = db.get_income_analytics()
+        now = datetime.date.today()
+
+        # Calculate monthly and annual income
+        monthly_income = 0
+        annual_income = 0
+        week_income = 0
+        week_start = now - datetime.timedelta(days=now.weekday())
+
+        for inv in (invoices_data or []):
+            amt = float(inv["grand_total"])
+            inv_date = inv["created_at"][:10]
+            inv_year = int(inv_date[:4])
+            inv_month = int(inv_date[5:7])
+
+            if inv_year == now.year:
+                annual_income += amt
+                if inv_month == now.month:
+                    monthly_income += amt
+
+            try:
+                inv_dt = datetime.date.fromisoformat(inv_date)
+                if inv_dt >= week_start:
+                    week_income += amt
+            except:
+                pass
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(f"<div class='stat-card'><p class='stat-label'>👥 Total Patients</p><p class='stat-value'>{stats['total_patients']}</p></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='stat-card'><p class='stat-label'>🩺 Today's Consultations</p><p class='stat-value'>{stats['today_consultations']}</p></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='stat-card'><p class='stat-label'>⏳ Pending</p><p class='stat-value'>{stats['pending']}</p></div>", unsafe_allow_html=True)
+        c4.markdown(f"<div class='stat-card'><p class='stat-label'>💰 Today's Revenue</p><p class='stat-value'>₹{stats['today_revenue']:,.0f}</p></div>", unsafe_allow_html=True)
+
+        st.markdown("")
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='stat-card'><p class='stat-label'>📅 This Week</p><p class='stat-value'>₹{week_income:,.0f}</p></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='stat-card'><p class='stat-label'>📆 This Month ({now.strftime('%B')})</p><p class='stat-value'>₹{monthly_income:,.0f}</p></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='stat-card'><p class='stat-label'>📊 This Year ({now.year})</p><p class='stat-value'>₹{annual_income:,.0f}</p></div>", unsafe_allow_html=True)
+
+    else:
+        # Doctor: basic stats with today's revenue
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(f"<div class='stat-card'><p class='stat-label'>👥 Total Patients</p><p class='stat-value'>{stats['total_patients']}</p></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='stat-card'><p class='stat-label'>🩺 Today's Consultations</p><p class='stat-value'>{stats['today_consultations']}</p></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='stat-card'><p class='stat-label'>⏳ Pending</p><p class='stat-value'>{stats['pending']}</p></div>", unsafe_allow_html=True)
+        c4.markdown(f"<div class='stat-card'><p class='stat-label'>💰 Today's Revenue</p><p class='stat-value'>₹{stats['today_revenue']:,.0f}</p></div>", unsafe_allow_html=True)
+
     st.markdown("")
     col1, col2 = st.columns(2)
     with col1:
@@ -273,12 +328,20 @@ def new_consultation_page():
         with c2: fh=st.text_area("Family History",height=80); ex=st.text_area("Examination",height=80)
         dx=st.text_area("Diagnosis *",height=80); c1,c2=st.columns(2)
         with c1: om=st.text_area("℞ Oral Medication",height=100)
-        with c2: pk=st.text_area("Panchakarma Therapy",height=100)
+        with c2:
+            # Panchakarma dropdown from services
+            pk_services = db.get_panchakarma_services()
+            pk_options = ["None"] + [f"{s['name']} (₹{s['price']})" for s in pk_services]
+            pk_selected = st.multiselect("Panchakarma Therapy", pk_options[1:], help="Select one or more therapies from the services list")
+            pk_additional = st.text_input("Additional therapy notes (optional)")
+            pk_value = ", ".join(pk_selected)
+            if pk_additional:
+                pk_value = f"{pk_value}. {pk_additional}" if pk_value else pk_additional
         an=st.text_area("Additional Notes",height=60)
         if st.form_submit_button("💾 Save Consultation", type="primary", use_container_width=True):
             if not mc or not dx: st.error("Please fill Complaint and Diagnosis")
             else:
-                db.create_consultation({"patient_id":pid,"doctor_id":st.session_state.user["id"],"visit_type":"initial","main_complaint":mc,"previous_medical_history":ph,"family_history":fh,"current_medication":cm,"examination":ex,"diagnosis":dx,"oral_medication":om,"panchakarma_therapy":pk,"additional_notes":an,"status":"completed"})
+                db.create_consultation({"patient_id":pid,"doctor_id":st.session_state.user["id"],"visit_type":"initial","main_complaint":mc,"previous_medical_history":ph,"family_history":fh,"current_medication":cm,"examination":ex,"diagnosis":dx,"oral_medication":om,"panchakarma_therapy":pk_value,"additional_notes":an,"status":"completed"})
                 st.success("✅ Consultation saved!"); st.session_state.page="patient_detail"; st.rerun()
 
 def add_follow_up_page():
@@ -289,10 +352,16 @@ def add_follow_up_page():
         cp=st.text_area("Follow-up Complaint",height=80); ex=st.text_area("Examination",height=80); dx=st.text_area("Diagnosis",height=80)
         c1,c2=st.columns(2)
         with c1: om=st.text_area("Oral Medication",height=100)
-        with c2: pk=st.text_area("Panchakarma Therapy",height=100)
+        with c2:
+            pk_services = db.get_panchakarma_services()
+            pk_selected = st.multiselect("Panchakarma Therapy", [f"{s['name']} (₹{s['price']})" for s in pk_services], key="fu_pk", help="Select therapies from the services list")
+            pk_additional = st.text_input("Additional therapy notes", key="fu_pk_notes")
+            pk_value = ", ".join(pk_selected)
+            if pk_additional:
+                pk_value = f"{pk_value}. {pk_additional}" if pk_value else pk_additional
         nt=st.text_area("Notes",height=60)
         if st.form_submit_button("💾 Save Follow-up", type="primary", use_container_width=True):
-            db.create_follow_up({"consultation_id":cid,"doctor_id":st.session_state.user["id"],"follow_up_complaint":cp,"follow_up_examination":ex,"follow_up_diagnosis":dx,"follow_up_oral_medication":om,"follow_up_panchakarma":pk,"follow_up_notes":nt})
+            db.create_follow_up({"consultation_id":cid,"doctor_id":st.session_state.user["id"],"follow_up_complaint":cp,"follow_up_examination":ex,"follow_up_diagnosis":dx,"follow_up_oral_medication":om,"follow_up_panchakarma":pk_value,"follow_up_notes":nt})
             st.success("✅ Follow-up saved!"); st.session_state.page="patient_detail"; st.rerun()
 
 def consultations_page():
@@ -314,6 +383,8 @@ def view_prescription_page():
     if st.button("← Back"): st.session_state.page="patient_detail"; st.rerun()
     follow_ups=db.get_follow_ups(cid)
     logo_html=logo_img_tag(160)
+
+    # Build follow-up HTML
     fu_html=""
     if follow_ups:
         fu_html="<div style='margin-top:16px;border-top:2px dashed #E5E0D8;padding-top:16px;'><h4 style='color:#B8860B;'>Follow-up Notes</h4>"
@@ -325,29 +396,73 @@ def view_prescription_page():
             if fu.get("follow_up_panchakarma"): fu_html+=f"<br/>Panchakarma: {fu['follow_up_panchakarma']}"
             fu_html+="</div>"
         fu_html+="</div>"
-    rx_html=f"""
-    <div style="border:2px solid #2D5016;border-radius:12px;padding:24px;background:white;max-width:700px;">
-        <div class='rx-header'>{logo_html}<p>Ayurveda for Everyday Skin</p></div>
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:16px;">
-            <div><strong>Patient:</strong> {patient.get('first_name','')} {patient.get('last_name','')}<br/><strong>UID:</strong> {patient.get('patient_uid','')}<br/><strong>Age/Sex:</strong> {patient.get('age','')} / {patient.get('sex','')}</div>
-            <div style="text-align:right"><strong>Date:</strong> {rx['created_at'][:10]}<br/><strong>Doctor:</strong> Dr. {doctor.get('full_name','')}<br/><strong>Qualification:</strong> {doctor.get('qualification','')}<br/><strong>Reg No:</strong> {doctor.get('registration_no','')}</div>
+
+    # Doctor info
+    dr_name = doctor.get('full_name','')
+    dr_qual = doctor.get('qualification','')
+    dr_reg = doctor.get('registration_no','')
+
+    # Patient info
+    p_name = f"{patient.get('first_name','')} {patient.get('last_name','')}"
+    p_uid = patient.get('patient_uid','')
+    p_age_sex = f"{patient.get('age','')} / {patient.get('sex','')}"
+    phone = patient.get("phone","")
+
+    # Display prescription
+    rx_html = f"""
+    <div id="printable-rx" style="border:2px solid #2D5016;border-radius:12px;padding:24px;background:white;max-width:700px;">
+        <div style="text-align:center;border-bottom:3px double #2D5016;padding-bottom:16px;margin-bottom:20px;">
+            {logo_html}
+            <p style="color:#6B705C;font-size:13px;margin:4px 0 0;">Ayurveda for Everyday Skin</p>
         </div>
-        <div class='rx-section'><strong>Complaint:</strong> {rx.get('main_complaint','—')}</div>
-        <div class='rx-section'><strong>Diagnosis:</strong> {rx.get('diagnosis','—')}</div>
-        {"<div class='rx-section'><strong>Examination:</strong> "+rx['examination']+"</div>" if rx.get('examination') else ""}
-        <div style="margin-top:16px"><span style="font-size:28px;color:#2D5016;font-weight:bold;">℞</span></div>
-        <div class='rx-section'><strong style="color:#2D5016;">Oral Medication:</strong><br/><pre style="font-family:inherit;white-space:pre-wrap;margin:4px 0;">{rx.get('oral_medication','—')}</pre></div>
-        <div class='rx-section'><strong style="color:#2D5016;">Panchakarma Therapy:</strong><br/><pre style="font-family:inherit;white-space:pre-wrap;margin:4px 0;">{rx.get('panchakarma_therapy','—')}</pre></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:16px;">
+            <div><strong>Patient:</strong> {p_name}<br/><strong>UID:</strong> {p_uid}<br/><strong>Age/Sex:</strong> {p_age_sex}</div>
+            <div style="text-align:right"><strong>Date:</strong> {rx['created_at'][:10]}<br/><strong>Doctor:</strong> Dr. {dr_name}<br/><strong>Qualification:</strong> {dr_qual}<br/><strong>Reg No:</strong> {dr_reg}</div>
+        </div>
+        <div style="padding:8px 0;border-bottom:1px solid #E5E0D8;"><strong>Complaint:</strong> {rx.get('main_complaint','—')}</div>
+        <div style="padding:8px 0;border-bottom:1px solid #E5E0D8;"><strong>Diagnosis:</strong> {rx.get('diagnosis','—')}</div>
+        {"<div style='padding:8px 0;border-bottom:1px solid #E5E0D8;'><strong>Examination:</strong> "+rx['examination']+"</div>" if rx.get('examination') else ""}
+        <div style="margin-top:16px"><span style="font-size:28px;color:#2D5016;font-weight:bold;">&#8478;</span></div>
+        <div style="padding:8px 0;border-bottom:1px solid #E5E0D8;"><strong style="color:#2D5016;">Oral Medication:</strong><br/><pre style="font-family:inherit;white-space:pre-wrap;margin:4px 0;">{rx.get('oral_medication','—')}</pre></div>
+        <div style="padding:8px 0;border-bottom:1px solid #E5E0D8;"><strong style="color:#2D5016;">Panchakarma Therapy:</strong><br/><pre style="font-family:inherit;white-space:pre-wrap;margin:4px 0;">{rx.get('panchakarma_therapy','—')}</pre></div>
         {fu_html}
-        <div class='rx-footer'><strong>Dr. {doctor.get('full_name','')}</strong><br/>{doctor.get('qualification','')}<br/>Reg. No: {doctor.get('registration_no','')}</div>
+        <div style="margin-top:30px;text-align:right;border-top:1px solid #ccc;padding-top:16px;">
+            <strong>Dr. {dr_name}</strong><br/>{dr_qual}<br/>Reg. No: {dr_reg}
+        </div>
     </div>"""
     st.markdown(rx_html, unsafe_allow_html=True)
+
+    # Print button - opens new window with ONLY the prescription
+    print_html = rx_html.replace('"', '&quot;').replace("'", "\\'").replace("\n", " ")
     st.markdown("")
-    c1,c2,c3=st.columns(3); phone=patient.get("phone","")
-    wa_msg=f"KayaSparsha Prescription\nPatient: {patient.get('first_name','')} {patient.get('last_name','')}\nDiagnosis: {rx.get('diagnosis','')}\nMedication: {rx.get('oral_medication','')}\nDoctor: Dr. {doctor.get('full_name','')}\nDate: {rx['created_at'][:10]}"
+    wa_msg=f"KayaSparsha Prescription\nPatient: {p_name}\nDiagnosis: {rx.get('diagnosis','')}\nMedication: {rx.get('oral_medication','')}\nDoctor: Dr. {dr_name}\nDate: {rx['created_at'][:10]}"
+
+    c1,c2,c3=st.columns(3)
     c1.link_button("💬 WhatsApp",f"https://wa.me/{phone}?text={urllib.parse.quote(wa_msg)}", use_container_width=True)
     c2.link_button("📱 SMS",f"sms:{phone}?body={urllib.parse.quote(wa_msg[:160])}", use_container_width=True)
-    c3.info("**Ctrl+P** to print")
+
+    # JavaScript print button that prints ONLY the prescription content
+    print_js = f"""
+    <button onclick="printRx()" style="width:100%;padding:10px 20px;background:#2D5016;color:white;border:none;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;">
+        🖨️ Print Prescription
+    </button>
+    <script>
+    function printRx() {{
+        var content = document.getElementById('printable-rx');
+        if (!content) {{ alert('Prescription not found'); return; }}
+        var win = window.open('', '_blank');
+        win.document.write('<html><head><title>KayaSparsha Prescription</title>');
+        win.document.write('<style>body{{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;}} @media print{{body{{padding:0;}}}} img{{max-width:160px;display:block;margin:0 auto;}}</style>');
+        win.document.write('</head><body>');
+        win.document.write(content.innerHTML);
+        win.document.write('</body></html>');
+        win.document.close();
+        win.onload = function() {{ win.print(); }};
+    }}
+    </script>
+    """
+    with c3:
+        st.markdown(print_js, unsafe_allow_html=True)
 
 
 def prescriptions_page():
@@ -410,25 +525,68 @@ def view_invoice_page():
     if not inv: st.error("Not found"); return
     if st.button("← Back to Invoices"): st.session_state.page="invoices"; st.rerun()
     p=inv.get("patients",{}); logo_html=logo_img_tag(140)
+    p_name = f"{p.get('first_name','')} {p.get('last_name','')}"
+    phone = p.get("phone","")
+
     items_html="".join(f"<tr><td style='padding:8px'>{it['description']}</td><td style='padding:8px;text-align:center'>{it['quantity']}</td><td style='padding:8px;text-align:right'>₹{float(it['unit_price']):,.0f}</td><td style='padding:8px;text-align:right;font-weight:600'>₹{float(it['total_price']):,.0f}</td></tr>" for it in inv.get("items",[]))
+
+    discount_html = f"<br/>Discount: -₹{float(inv['discount']):,.0f}" if float(inv.get('discount',0))>0 else ""
+    tax_html = f"<br/>Tax: +₹{float(inv['tax']):,.0f}" if float(inv.get('tax',0))>0 else ""
+
     st.markdown(f"""
-    <div style="border:2px solid #2D5016;border-radius:12px;padding:24px;background:white;max-width:650px;">
-        <div style="text-align:center;border-bottom:3px double #2D5016;padding-bottom:12px;margin-bottom:16px;">{logo_html}<p style="color:#6B705C;font-size:12px;margin-top:4px;">TAX INVOICE</p></div>
+    <div id="printable-inv" style="border:2px solid #2D5016;border-radius:12px;padding:24px;background:white;max-width:650px;">
+        <div style="text-align:center;border-bottom:3px double #2D5016;padding-bottom:12px;margin-bottom:16px;">
+            {logo_html}
+            <p style="color:#6B705C;font-size:12px;margin-top:4px;">TAX INVOICE</p>
+        </div>
         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:16px;">
-            <div><strong>Bill To:</strong><br/>{p.get('first_name','')} {p.get('last_name','')}<br/>{p.get('phone','')}<br/>{p.get('address','')} {p.get('city','')}</div>
+            <div><strong>Bill To:</strong><br/>{p_name}<br/>{phone}<br/>{p.get('address','')} {p.get('city','')}</div>
             <div style="text-align:right"><strong>Invoice #:</strong> {inv['invoice_number']}<br/><strong>Date:</strong> {inv['created_at'][:10]}<br/><strong>Status:</strong> {inv['payment_status']}</div>
         </div>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="border-bottom:2px solid #2D5016"><th style="text-align:left;padding:8px">Description</th><th style="text-align:center;padding:8px">Qty</th><th style="text-align:right;padding:8px">Price</th><th style="text-align:right;padding:8px">Total</th></tr></thead><tbody>{items_html}</tbody></table>
-        <div style="text-align:right;margin-top:16px;font-size:13px;">Subtotal: ₹{float(inv['total_amount']):,.0f}{"<br/>Discount: -₹"+f"{float(inv['discount']):,.0f}" if float(inv.get('discount',0))>0 else ""}{"<br/>Tax: +₹"+f"{float(inv['tax']):,.0f}" if float(inv.get('tax',0))>0 else ""}</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="border-bottom:2px solid #2D5016">
+                <th style="text-align:left;padding:8px">Description</th>
+                <th style="text-align:center;padding:8px">Qty</th>
+                <th style="text-align:right;padding:8px">Price</th>
+                <th style="text-align:right;padding:8px">Total</th>
+            </tr></thead>
+            <tbody>{items_html}</tbody>
+        </table>
+        <div style="text-align:right;margin-top:16px;font-size:13px;">
+            Subtotal: ₹{float(inv['total_amount']):,.0f}{discount_html}{tax_html}
+        </div>
         <div style="text-align:right;font-size:22px;font-weight:800;color:#2D5016;margin-top:8px;">₹{float(inv['grand_total']):,.0f}</div>
         <p style="text-align:center;margin-top:30px;color:#6B705C;font-size:12px;">Thank you for choosing KayaSparsha Ayurvedic Clinic</p>
     </div>""", unsafe_allow_html=True)
-    st.markdown(""); phone=p.get("phone","")
-    wa_msg=f"KayaSparsha Invoice {inv['invoice_number']}\nPatient: {p.get('first_name','')} {p.get('last_name','')}\nTotal: ₹{float(inv['grand_total']):,.0f}\nDate: {inv['created_at'][:10]}\nThank you!"
+
+    st.markdown("")
+    wa_msg=f"KayaSparsha Invoice {inv['invoice_number']}\nPatient: {p_name}\nTotal: ₹{float(inv['grand_total']):,.0f}\nDate: {inv['created_at'][:10]}\nThank you!"
     c1,c2,c3=st.columns(3)
     c1.link_button("💬 WhatsApp",f"https://wa.me/{phone}?text={urllib.parse.quote(wa_msg)}",use_container_width=True)
     c2.link_button("📱 SMS",f"sms:{phone}?body={urllib.parse.quote(wa_msg[:160])}",use_container_width=True)
-    c3.info("**Ctrl+P** to print")
+
+    # JavaScript print button that prints ONLY the invoice content
+    print_js = """
+    <button onclick="printInv()" style="width:100%;padding:10px 20px;background:#2D5016;color:white;border:none;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;">
+        🖨️ Print Invoice
+    </button>
+    <script>
+    function printInv() {
+        var content = document.getElementById('printable-inv');
+        if (!content) { alert('Invoice not found'); return; }
+        var win = window.open('', '_blank');
+        win.document.write('<html><head><title>KayaSparsha Invoice</title>');
+        win.document.write('<style>body{font-family:Georgia,serif;max-width:650px;margin:0 auto;padding:20px;} @media print{body{padding:0;}} img{max-width:140px;display:block;margin:0 auto;} table{width:100%;border-collapse:collapse;} th,td{padding:8px;}</style>');
+        win.document.write('</head><body>');
+        win.document.write(content.innerHTML);
+        win.document.write('</body></html>');
+        win.document.close();
+        win.onload = function() { win.print(); };
+    }
+    </script>
+    """
+    with c3:
+        st.markdown(print_js, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -476,26 +634,119 @@ def users_page():
 
 def reports_page():
     st.markdown("<div class='page-title'>Reports</div>", unsafe_allow_html=True)
-    st.markdown("<div class='page-subtitle'>Export clinic data to Excel</div>", unsafe_allow_html=True)
+    st.markdown("<div class='page-subtitle'>Export clinic data and view income analytics</div>", unsafe_allow_html=True)
+
+    # ─── Income Analytics Section ──────────────────────────────────
+    st.subheader("💰 Income Analytics")
+
+    invoices_data = db.get_income_analytics()
+    now = datetime.date.today()
+
+    if invoices_data:
+        # Build a dataframe with date parsing
+        inv_df = pd.DataFrame(invoices_data)
+        inv_df["amount"] = inv_df["grand_total"].astype(float)
+        inv_df["date"] = pd.to_datetime(inv_df["created_at"]).dt.date
+        inv_df["week"] = pd.to_datetime(inv_df["created_at"]).dt.isocalendar().week
+        inv_df["month"] = pd.to_datetime(inv_df["created_at"]).dt.month
+        inv_df["month_name"] = pd.to_datetime(inv_df["created_at"]).dt.strftime("%B %Y")
+        inv_df["year"] = pd.to_datetime(inv_df["created_at"]).dt.year
+
+        # Period selector
+        period = st.radio("View income by:", ["This Week", "This Month", "This Year", "All Time", "Custom Range"], horizontal=True)
+
+        if period == "This Week":
+            week_start = now - datetime.timedelta(days=now.weekday())
+            filtered = inv_df[inv_df["date"] >= week_start]
+            title = f"Week of {week_start.strftime('%d %b %Y')}"
+        elif period == "This Month":
+            filtered = inv_df[(inv_df["month"] == now.month) & (inv_df["year"] == now.year)]
+            title = now.strftime("%B %Y")
+        elif period == "This Year":
+            filtered = inv_df[inv_df["year"] == now.year]
+            title = str(now.year)
+        elif period == "Custom Range":
+            c1, c2 = st.columns(2)
+            start_date = c1.date_input("From", value=now - datetime.timedelta(days=30))
+            end_date = c2.date_input("To", value=now)
+            filtered = inv_df[(inv_df["date"] >= start_date) & (inv_df["date"] <= end_date)]
+            title = f"{start_date.strftime('%d %b')} — {end_date.strftime('%d %b %Y')}"
+        else:
+            filtered = inv_df
+            title = "All Time"
+
+        # Summary cards
+        total_income = filtered["amount"].sum()
+        total_transactions = len(filtered)
+        avg_per_day = total_income / max((filtered["date"].nunique()), 1)
+
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='stat-card'><p class='stat-label'>Total Income ({title})</p><p class='stat-value'>₹{total_income:,.0f}</p></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='stat-card'><p class='stat-label'>Transactions</p><p class='stat-value'>{total_transactions}</p></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='stat-card'><p class='stat-label'>Avg / Day</p><p class='stat-value'>₹{avg_per_day:,.0f}</p></div>", unsafe_allow_html=True)
+
+        # Monthly breakdown table
+        st.markdown("")
+        st.subheader("📊 Monthly Breakdown")
+        monthly = inv_df.groupby("month_name").agg(
+            Income=("amount", "sum"),
+            Transactions=("amount", "count"),
+        ).reset_index()
+        monthly.columns = ["Month", "Income (₹)", "Transactions"]
+        monthly["Income (₹)"] = monthly["Income (₹)"].apply(lambda x: f"₹{x:,.0f}")
+        st.dataframe(monthly, use_container_width=True, hide_index=True)
+
+        # Payment method breakdown
+        st.subheader("💳 By Payment Method")
+        by_method = filtered.groupby("payment_method").agg(
+            Income=("amount", "sum"),
+            Count=("amount", "count"),
+        ).reset_index()
+        by_method.columns = ["Payment Method", "Income (₹)", "Transactions"]
+        by_method["Income (₹)"] = by_method["Income (₹)"].apply(lambda x: f"₹{x:,.0f}")
+        st.dataframe(by_method, use_container_width=True, hide_index=True)
+
+        # Download consolidated income report
+        st.markdown("")
+        st.subheader("📥 Download Consolidated Income Report")
+        income_report = inv_df[["date", "amount", "payment_method"]].copy()
+        income_report.columns = ["Date", "Amount (₹)", "Payment Method"]
+        income_report = income_report.sort_values("Date", ascending=False)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            income_report.to_excel(writer, sheet_name="All Transactions", index=False)
+            # Monthly summary sheet
+            monthly_raw = inv_df.groupby("month_name").agg(Income=("amount","sum"), Transactions=("amount","count")).reset_index()
+            monthly_raw.columns = ["Month", "Total Income (₹)", "Transactions"]
+            monthly_raw.to_excel(writer, sheet_name="Monthly Summary", index=False)
+        st.download_button("📥 Download Income Report (Excel)", output.getvalue(), "income_report.xlsx", use_container_width=True)
+
+    else:
+        st.info("No paid invoices yet. Income data will appear once invoices are generated.")
+
+    # ─── Data Export Section ───────────────────────────────────────
+    st.markdown("---")
+    st.subheader("📋 Data Exports")
+
     c1,c2,c3=st.columns(3)
     with c1:
         st.markdown("<div class='stat-card' style='text-align:center'><p style='font-size:40px;margin:0'>👥</p><p style='font-weight:700;font-size:16px'>Patient Report</p></div>",unsafe_allow_html=True)
         data=db.get_patients_report()
-        if data: o=io.BytesIO(); pd.DataFrame(data).to_excel(o,index=False,engine="xlsxwriter"); st.download_button("📥 Download",o.getvalue(),"patients_report.xlsx",use_container_width=True)
+        if data: o=io.BytesIO(); pd.DataFrame(data).to_excel(o,index=False,engine="xlsxwriter"); st.download_button("📥 Download",o.getvalue(),"patients_report.xlsx",use_container_width=True, key="dl_patients")
     with c2:
         st.markdown("<div class='stat-card' style='text-align:center'><p style='font-size:40px;margin:0'>🧾</p><p style='font-weight:700;font-size:16px'>Invoice Report</p></div>",unsafe_allow_html=True)
         data=db.get_invoices_report()
         if data:
             rows=[]
             for d in data: p=d.pop("patients",{}); d["patient_uid"]=p.get("patient_uid",""); d["patient_name"]=f"{p.get('first_name','')} {p.get('last_name','')}"; rows.append(d)
-            o=io.BytesIO(); pd.DataFrame(rows).to_excel(o,index=False,engine="xlsxwriter"); st.download_button("📥 Download",o.getvalue(),"invoices_report.xlsx",use_container_width=True)
+            o=io.BytesIO(); pd.DataFrame(rows).to_excel(o,index=False,engine="xlsxwriter"); st.download_button("📥 Download",o.getvalue(),"invoices_report.xlsx",use_container_width=True, key="dl_invoices")
     with c3:
         st.markdown("<div class='stat-card' style='text-align:center'><p style='font-size:40px;margin:0'>🩺</p><p style='font-weight:700;font-size:16px'>Consultation Report</p></div>",unsafe_allow_html=True)
         data=db.get_consultations_report()
         if data:
             rows=[]
             for d in data: p=d.pop("patients",{}); u=d.pop("users",{}); d["patient_uid"]=p.get("patient_uid",""); d["patient_name"]=f"{p.get('first_name','')} {p.get('last_name','')}"; d["doctor"]=u.get("full_name",""); rows.append(d)
-            o=io.BytesIO(); pd.DataFrame(rows).to_excel(o,index=False,engine="xlsxwriter"); st.download_button("📥 Download",o.getvalue(),"consultations_report.xlsx",use_container_width=True)
+            o=io.BytesIO(); pd.DataFrame(rows).to_excel(o,index=False,engine="xlsxwriter"); st.download_button("📥 Download",o.getvalue(),"consultations_report.xlsx",use_container_width=True, key="dl_consults")
 
 
 # ═══════════════════════════════════════════════════════════════════

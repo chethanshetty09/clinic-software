@@ -231,3 +231,19 @@ def get_generated_prescriptions():
 def get_doctors():
     sb = get_supabase()
     return sb.table("users").select("id, full_name, qualification, registration_no").eq("role", "doctor").eq("is_active", True).execute().data
+
+
+# ─── Panchakarma services for doctor dropdown ────────────────────
+
+def get_panchakarma_services():
+    """Get services in panchakarma/therapy categories for doctor dropdown."""
+    sb = get_supabase()
+    return sb.table("services").select("id, name, category, price").eq("is_active", True).in_("category", ["panchakarma", "therapy"]).order("name").execute().data
+
+
+# ─── Income Analytics (Super Admin) ──────────────────────────────
+
+def get_income_analytics():
+    """Get all paid invoices for income analysis."""
+    sb = get_supabase()
+    return sb.table("invoices").select("grand_total, created_at, payment_method").eq("payment_status", "paid").order("created_at", desc=True).execute().data
